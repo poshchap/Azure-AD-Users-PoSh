@@ -79,9 +79,9 @@
     [CmdletBinding()]
     param(
 
-        #The tenant ID
+        #The tenant ID in GUID form
         [Parameter(Mandatory,Position=0)]
-        [string]$TenantId,
+        [guid]$TenantId,
 
         #Get sign-in activity for all users in the tenant
         [Parameter(Mandatory,Position=1,ParameterSetName="All")]
@@ -151,7 +151,7 @@
 
             #The tenant ID
             [Parameter(Mandatory,Position=0)]
-            [string]$TenantId,
+            [guid]$TenantId,
 
             #The tenant ID
             [Parameter(Position=1)]
@@ -198,10 +198,10 @@
 
             Write-Verbose -Message "$(Get-Date -f T) - Checking token cache"
 
-            #Run this to interactvely obtain an access token
+            #Run this to obtain an access token - should prompt on first run to select the account used for future operations
             try {
 
-                $Response = Get-MsalToken -ClientId $ClientId -RedirectUri $RedirectUri -Authority $Authority
+                $Response = Get-MsalToken -ClientId $ClientId -RedirectUri $RedirectUri -Authority $Authority -Prompt SelectAccount
             }
             catch {}
 
