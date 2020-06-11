@@ -25,6 +25,11 @@
         Can also produce a date and time stamped CSV file as output.
 
 
+        PRE-REQUISITE - the function uses the MSAL.ps module from the PS Gallery:
+        
+                        https://www.powershellgallery.com/packages/MSAL.ps
+
+
     .EXAMPLE
 
         Get-AzureADUserLastSignInActivity -TenantId b446a536-cb76-4360-a8bb-6593cf4d9c7f -All
@@ -249,241 +254,255 @@
     ##################
     #region MAIN
 
-    #Deal with different search criterea
-    if ($All) {
+    #Try and get MSAL.ps module 
+    $MSAL = Get-Module -ListAvailable MSAL.ps -Verbose:$false -ErrorAction SilentlyContinue
 
-        #API endpoint
-        $Filter = "?`$select=displayName,userPrincipalName,Id,signInActivity,userType,externalUserState,creationType,createdDateTime"
+    if ($MSAL) {
 
-        Write-Verbose -Message "$(Get-Date -f T) - All user mode selected"
+        Write-Verbose -Message "$(Get-Date -f T) - MSAL.ps installed"
 
-    }
-    elseif ($UserObjectId) {
+        #Deal with different search criterea
+        if ($All) {
 
-        #API endpoint
-        $Filter = "?`$filter=ID eq '$UserObjectId'&`$select=displayName,userPrincipalName,Id,signInActivity,userType,externalUserState,creationType,createdDateTime"
+            #API endpoint
+            $Filter = "?`$select=displayName,userPrincipalName,Id,signInActivity,userType,externalUserState,creationType,createdDateTime"
 
-        Write-Verbose -Message "$(Get-Date -f T) - Single user mode selected"
+            Write-Verbose -Message "$(Get-Date -f T) - All user mode selected"
 
-    }
-    elseif ($StaleThreshold) {
+        }
+        elseif ($UserObjectId) {
 
-        Write-Verbose -Message "$(Get-Date -f T) - Stale mode selected"
+            #API endpoint
+            $Filter = "?`$filter=ID eq '$UserObjectId'&`$select=displayName,userPrincipalName,Id,signInActivity,userType,externalUserState,creationType,createdDateTime"
 
-        #Obtain a datetime object before which accounts are considered stale
-        $DaysAgo = (Get-Date (Get-Date).AddDays(-$StaleThreshold) -Format s) + "Z"
+            Write-Verbose -Message "$(Get-Date -f T) - Single user mode selected"
 
-        Write-Verbose -Message "$(Get-Date -f T) - Stale threshold set to $DaysAgo"
+        }
+        elseif ($StaleThreshold) {
 
-        #API endpoint
-        $Select = "&`$select=displayName,userPrincipalName,Id,signInActivity,userType,externalUserState,creationType,createdDateTime"
-        $Filter = "?`$filter=signInActivity/lastSignInDateTime le $DaysAgo$Select"
+            Write-Verbose -Message "$(Get-Date -f T) - Stale mode selected"
 
-    }
+            #Obtain a datetime object before which accounts are considered stale
+            $DaysAgo = (Get-Date (Get-Date).AddDays(-$StaleThreshold) -Format s) + "Z"
+
+            Write-Verbose -Message "$(Get-Date -f T) - Stale threshold set to $DaysAgo"
+
+            #API endpoint
+            $Select = "&`$select=displayName,userPrincipalName,Id,signInActivity,userType,externalUserState,creationType,createdDateTime"
+            $Filter = "?`$filter=signInActivity/lastSignInDateTime le $DaysAgo$Select"
+
+        }
 
 
-    ############################################################################
+        ############################################################################
     
-    $Url = "https://graph.microsoft.com/beta/users$Filter"
+        $Url = "https://graph.microsoft.com/beta/users$Filter"
 
 
-    ############################################################################
+        ############################################################################
 
-    #Get / refresh an access token
-    $Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
+        #Get / refresh an access token
+        $Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
 
-    if ($Token) {
+        if ($Token) {
 
-        #Construct header with access token
-        $Headers = Get-AzureADHeader($Token)
+            #Construct header with access token
+            $Headers = Get-AzureADHeader($Token)
 
-        #Tracking variables
-        $Count = 0
-        $RetryCount = 0
-        $OneSuccessfulFetch = $false
-        $TotalReport = $null
+            #Tracking variables
+            $Count = 0
+            $RetryCount = 0
+            $OneSuccessfulFetch = $false
+            $TotalReport = $null
 
 
-        #Do until the fetch URL is null
-        do {
+            #Do until the fetch URL is null
+            do {
 
-            Write-Verbose -Message "$(Get-Date -f T) - Invoking web request for $Url"
+                Write-Verbose -Message "$(Get-Date -f T) - Invoking web request for $Url"
 
-            ##################################
-            #Do our stuff with error handling
-            try {
+                ##################################
+                #Do our stuff with error handling
+                try {
 
-                #Invoke the web request
-                $MyReport = (Invoke-WebRequest -UseBasicParsing -Headers $Headers -Uri $Url -Verbose:$false)
+                    #Invoke the web request
+                    $MyReport = (Invoke-WebRequest -UseBasicParsing -Headers $Headers -Uri $Url -Verbose:$false)
 
-            }
-            catch [System.Net.WebException] {
+                }
+                catch [System.Net.WebException] {
         
-                $StatusCode = [int]$_.Exception.Response.StatusCode
-                Write-Warning -Message "$(Get-Date -f T) - $($_.Exception.Message)"
+                    $StatusCode = [int]$_.Exception.Response.StatusCode
+                    Write-Warning -Message "$(Get-Date -f T) - $($_.Exception.Message)"
 
-                #Check what's gone wrong
-                if (($StatusCode -eq 401) -and ($OneSuccessfulFetch)) {
+                    #Check what's gone wrong
+                    if (($StatusCode -eq 401) -and ($OneSuccessfulFetch)) {
 
-                    #Token might have expired; renew token and try again
-                    $Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
-                    $Headers = Get-AzureADHeader($Token)
-                    $OneSuccessfulFetch = $False
-
-                }
-                elseif (($StatusCode -eq 429) -or ($StatusCode -eq 504) -or ($StatusCode -eq 503)) {
-
-                    #Throttled request or a temporary issue, wait for a few seconds and retry
-                    Start-Sleep -Seconds 5
-
-                }
-                elseif (($StatusCode -eq 403) -or ($StatusCode -eq 401)) {
-
-                    Write-Warning -Message "$(Get-Date -f T) - Please check the permissions of the user"
-                    break
-
-                }
-                elseif ($StatusCode -eq 400) {
-
-                    Write-Warning -Message "$(Get-Date -f T) - Please check the query used"
-                    break
+                        #Token might have expired; renew token and try again
+                        $Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
+                        $Headers = Get-AzureADHeader($Token)
+                        $OneSuccessfulFetch = $False
 
                     }
-                else {
+                    elseif (($StatusCode -eq 429) -or ($StatusCode -eq 504) -or ($StatusCode -eq 503)) {
+
+                        #Throttled request or a temporary issue, wait for a few seconds and retry
+                        Start-Sleep -Seconds 5
+
+                    }
+                    elseif (($StatusCode -eq 403) -or ($StatusCode -eq 401)) {
+
+                        Write-Warning -Message "$(Get-Date -f T) - Please check the permissions of the user"
+                        break
+
+                    }
+                    elseif ($StatusCode -eq 400) {
+
+                        Write-Warning -Message "$(Get-Date -f T) - Please check the query used"
+                        break
+
+                        }
+                    else {
             
-                    #Retry up to 5 times
-                    if ($RetryCount -lt 5) {
+                        #Retry up to 5 times
+                        if ($RetryCount -lt 5) {
                 
+                            write-output "Retrying..."
+                            $RetryCount++
+
+                        }
+                        else {
+                
+                            #Write to host and exit loop
+                            Write-Warning -Message "$(Get-Date -f T) - Download request failed. Please try again in the future"
+                            break
+
+                        }
+
+                    }
+
+                }
+                catch {
+
+                    #Write error details to host
+                    Write-Warning -Message "$(Get-Date -f T) - $($_.Exception)"
+
+
+                    #Retry up to 5 times    
+                    if ($RetryCount -lt 5) {
+
                         write-output "Retrying..."
                         $RetryCount++
 
                     }
                     else {
-                
+
                         #Write to host and exit loop
-                        Write-Warning -Message "$(Get-Date -f T) - Download request failed. Please try again in the future"
+                        Write-Warning -Message "$(Get-Date -f T) - Download request failed - please try again in the future"
                         break
 
                     }
 
-                }
-
-            }
-            catch {
-
-                #Write error details to host
-                Write-Warning -Message "$(Get-Date -f T) - $($_.Exception)"
+                } # end try / catch
 
 
-                #Retry up to 5 times    
-                if ($RetryCount -lt 5) {
+                ###############################
+                #Convert the content from JSON
+                $ConvertedReport = ($MyReport.Content | ConvertFrom-Json).value
 
-                    write-output "Retrying..."
-                    $RetryCount++
+                $TotalObjects = @()
 
-                }
-                else {
+                foreach ($User in $ConvertedReport) {
 
-                    #Write to host and exit loop
-                    Write-Warning -Message "$(Get-Date -f T) - Download request failed - please try again in the future"
-                    break
+                    if ($GuestInfo) {
 
-                }
+                        #Construct a custom object
+                        $Properties = [PSCustomObject]@{
 
-            } # end try / catch
+                            displayName = $User.displayName
+                            userPrincipalName = $User.userPrincipalName
+                            objectId = $User.Id
+                            lastSignInDateTime = $User.signInActivity.lastSignInDateTime
+                            lastSignInRequestId = $User.signInActivity.lastSignInRequestId
+                            userType = $User.userType
+                            createdDateTime = $User.createdDateTime
+                            externalUserState = $User.externalUserState
+                            creationType = $User.creationType
 
-
-            ###############################
-            #Convert the content from JSON
-            $ConvertedReport = ($MyReport.Content | ConvertFrom-Json).value
-
-            $TotalObjects = @()
-
-            foreach ($User in $ConvertedReport) {
-
-                if ($GuestInfo) {
-
-                    #Construct a custom object
-                    $Properties = [PSCustomObject]@{
-
-                        displayName = $User.displayName
-                        userPrincipalName = $User.userPrincipalName
-                        objectId = $User.Id
-                        lastSignInDateTime = $User.signInActivity.lastSignInDateTime
-                        lastSignInRequestId = $User.signInActivity.lastSignInRequestId
-                        userType = $User.userType
-                        createdDateTime = $User.createdDateTime
-                        externalUserState = $User.externalUserState
-                        creationType = $User.creationType
-
-                    }
+                        }
             
-                }
-                else {
+                    }
+                    else {
 
-                    #Construct a custom object
-                    $Properties = [PSCustomObject]@{
+                        #Construct a custom object
+                        $Properties = [PSCustomObject]@{
 
-                        displayName = $User.displayName
-                        userPrincipalName = $User.userPrincipalName
-                        objectId = $User.Id
-                        lastSignInDateTime = $User.signInActivity.lastSignInDateTime
-                        lastSignInRequestId = $User.signInActivity.lastSignInRequestId
+                            displayName = $User.displayName
+                            userPrincipalName = $User.userPrincipalName
+                            objectId = $User.Id
+                            lastSignInDateTime = $User.signInActivity.lastSignInDateTime
+                            lastSignInRequestId = $User.signInActivity.lastSignInRequestId
+
+                        }
 
                     }
 
+                    $TotalObjects += $Properties
                 }
 
-                $TotalObjects += $Properties
-            }
 
+                #Add to concatenated findings
+                [array]$TotalReport += $TotalObjects
 
-            #Add to concatenated findings
-            [array]$TotalReport += $TotalObjects
+                #Update the fetch url to include the paging element
+                $Url = ($myReport.Content | ConvertFrom-Json).'@odata.nextLink'
 
-            #Update the fetch url to include the paging element
-            $Url = ($myReport.Content | ConvertFrom-Json).'@odata.nextLink'
-
-            #Update the access tokenon the second iteration
-            if ($OneSuccessfulFetch) {
+                #Update the access tokenon the second iteration
+                if ($OneSuccessfulFetch) {
                 
-                $Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
-                $Headers = Get-AzureADHeader($Token)
+                    $Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
+                    $Headers = Get-AzureADHeader($Token)
 
-            }
+                }
 
-            #Update count and show for this cycle
-            $Count = $Count + $ConvertedReport.Count
-            Write-Verbose -Message "$(Get-Date -f T) - Total records fetched: $count"
+                #Update count and show for this cycle
+                $Count = $Count + $ConvertedReport.Count
+                Write-Verbose -Message "$(Get-Date -f T) - Total records fetched: $count"
 
-            #Update tracking variables
-            $OneSuccessfulFetch = $true
-            $RetryCount = 0
-
-
-        } while ($Url) #end do / while
+                #Update tracking variables
+                $OneSuccessfulFetch = $true
+                $RetryCount = 0
 
 
-    }
+            } while ($Url) #end do / while
 
-    #See if we need to write to CSV
-    if ($CsvOutput) {
 
-        #Output file
-        $now = "{0:yyyyMMdd_hhmmss}" -f (Get-Date)
-        $CsvName = "UserLastSignInDetails_$now.csv"
+        }
 
-        Write-Verbose -Message "$(Get-Date -f T) - Generating a CSV for last user Sign-In details"
+        #See if we need to write to CSV
+        if ($CsvOutput) {
 
-        $TotalReport | Export-Csv -Path $CsvName -NoTypeInformation
+            #Output file
+            $now = "{0:yyyyMMdd_hhmmss}" -f (Get-Date)
+            $CsvName = "UserLastSignInDetails_$now.csv"
 
-        Write-Verbose -Message "$(Get-Date -f T) - Last user sign-in details written to $(Get-Location)\$CsvName"
+            Write-Verbose -Message "$(Get-Date -f T) - Generating a CSV for last user Sign-In details"
+
+            $TotalReport | Export-Csv -Path $CsvName -NoTypeInformation
+
+            Write-Verbose -Message "$(Get-Date -f T) - Last user sign-in details written to $(Get-Location)\$CsvName"
+
+        }
+        else {
+
+            #Return stuff
+            $TotalReport
+
+        }
 
     }
     else {
 
-        #Return stuff
-        $TotalReport
+        Write-Warning -Message "$(Get-Date -f T) - Please install the MSAL.ps PowerShell module (Find-Module MSAL.ps)"    
 
     }
 
