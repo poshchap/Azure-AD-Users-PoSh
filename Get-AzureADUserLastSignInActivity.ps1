@@ -392,7 +392,7 @@
             $RetryCount = 0
             $OneSuccessfulFetch = $false
             $TotalReport = $null
-            $i = 0
+            $i = 1
 
 
             #Do until the fetch URL is null
