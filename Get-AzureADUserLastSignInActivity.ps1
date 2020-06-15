@@ -233,12 +233,38 @@
 
     function Get-AzureADHeader {
     
-        param($Token)
+        [CmdletBinding()]
+        param(
 
-        return @{
+            #The tenant ID
+            [Parameter(Mandatory,Position=0)]
+            [string]$Token,
 
-            "Authorization" = ("Bearer {0}" -f $Token);
-            "Content-Type" = "application/json";
+            #Switch to include ConsistencyLevel = Eventual for $count operations
+            [Parameter(Position=1)]
+            [switch]$ConsistencyLevelEventual
+
+            )
+
+        if ($ConsistencyLevelEventual) {
+
+            return @{
+
+                "Authorization" = ("Bearer {0}" -f $Token);
+                "Content-Type" = "application/json";
+                "ConsistencyLevel" = "eventual";
+
+            }
+
+        }
+        else {
+
+            return @{
+
+                "Authorization" = ("Bearer {0}" -f $Token); 
+                "Content-Type" = "application/json";
+
+            }
 
         }
 
@@ -302,18 +328,71 @@
         ############################################################################
 
         #Get / refresh an access token
-        $Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
+        $global:Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
 
         if ($Token) {
 
-            #Construct header with access token
-            $Headers = Get-AzureADHeader($Token)
+            if ($All) {
+
+                #Construct header with access token and ConsistencyLevel = Eventual
+                $Headers = Get-AzureADHeader -Token $Token -ConsistencyLevelEventual
+
+                $CountUrl = "https://graph.microsoft.com/beta/users/`$count"
+
+                Write-Verbose -Message "$(Get-Date -f T) - Invoking web request for $CountUrl"
+
+                #Now make a call to get the number of users
+                try {
+                 
+                    $UserCount = (Invoke-WebRequest -Headers $Headers -Uri $CountUrl -Verbose:$false)
+
+                }
+                catch {}
+
+                if ($UserCount) {
+
+                    #Estimate execution time
+                    if ($CsvOutput) {
+
+                        $ExTime = (0.03 * $UserCount.Content)
+
+                    }
+                    else {
+
+                        $ExTime = (0.035 * $UserCount.Content)
+
+                    }
+
+
+                    $ExTimeSpan = [timespan]::FromSeconds($ExTime)
+
+                    Write-Verbose -Message "$(Get-Date -f T) - Estimated function execution time is $($ExTimeSpan.Hours) hours, $($ExTimeSpan.Minutes) minutes, $($ExTimeSpan.Seconds) seconds"
+                    
+
+                    #Light up the progress bar in the later loop
+                    $ShowProgress = $true
+
+
+                }
+                else {
+
+                    Write-Warning -Message "$(Get-Date -f T) - User count unobtainable - unable to estimate function execution time"
+                }
+
+            }
+            else {
+
+                #Construct header with access token
+                $Headers = Get-AzureADHeader -Token $Token
+
+            }
 
             #Tracking variables
             $Count = 0
             $RetryCount = 0
             $OneSuccessfulFetch = $false
             $TotalReport = $null
+            $i = 0
 
 
             #Do until the fetch URL is null
@@ -339,7 +418,7 @@
 
                         #Token might have expired; renew token and try again
                         $Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
-                        $Headers = Get-AzureADHeader($Token)
+                        $Headers = Get-AzureADHeader -Token $Token
                         $OneSuccessfulFetch = $False
 
                     }
@@ -447,6 +526,16 @@
                     }
 
                     $TotalObjects += $Properties
+
+                    #Progress bar when targeting all users
+                    if ($ShowProgress) {
+
+                        Write-Progress -Activity "Processing..." `
+                                    -Status ("Checked {0}/{1} user accounts" -f $i++, $UserCount.Content) `
+                                    -PercentComplete (($i / $UserCount.Content) * 100)
+
+                    }
+
                 }
 
 
@@ -460,7 +549,7 @@
                 if ($OneSuccessfulFetch) {
                 
                     $Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
-                    $Headers = Get-AzureADHeader($Token)
+                    $Headers = Get-AzureADHeader -Token $Token
 
                 }
 
