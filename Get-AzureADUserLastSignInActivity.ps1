@@ -532,7 +532,7 @@
 
                         Write-Progress -Activity "Processing..." `
                                     -Status ("Checked {0}/{1} user accounts" -f $i++, $UserCount.Content) `
-                                    -PercentComplete (($i / $UserCount.Content) * 100)
+                                    -PercentComplete ((($i -1) / $UserCount.Content) * 100)
 
                     }
 
