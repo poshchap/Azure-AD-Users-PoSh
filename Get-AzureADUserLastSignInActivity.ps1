@@ -206,7 +206,7 @@
             #Run this to obtain an access token - should prompt on first run to select the account used for future operations
             try {
 
-                $Response = Get-MsalToken -ClientId $ClientId -RedirectUri $RedirectUri -Authority $Authority -Prompt SelectAccount
+                $Response = Get-MsalToken -ClientId $ClientId -RedirectUri $RedirectUri -Authority $Authority -Prompt SelectAccount -InterActive
             }
             catch {}
 
