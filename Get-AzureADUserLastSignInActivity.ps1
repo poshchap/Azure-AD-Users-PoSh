@@ -130,7 +130,7 @@
 
         .DESCRIPTION
 
-            Uses MSAL.ps to ontain an access token. Has an option to refresh an existing token.
+            Uses MSAL.ps to obtain an access token. Has an option to refresh an existing token.
 
         .EXAMPLE
 
@@ -147,21 +147,44 @@
             Gets or refreshes an access token for making API calls for the tenant ID
             b446a536-cb76-4360-a8bb-6593cf4d9c7f.
 
+
+        .EXAMPLE
+
+            Get-AzureADApiToken -TenantId b446a536-cb76-4360-a8bb-6593cf4d9c7f -LoginHint Bob@Contoso.com
+
+            Gets or refreshes an access token for making API calls for the tenant ID
+            b446a536-cb76-4360-a8bb-6593cf4d9c7f and user Bob@Contoso.com.
+
+
+        .EXAMPLE
+
+            Get-AzureADApiToken -TenantId b446a536-cb76-4360-a8bb-6593cf4d9c7f -InterActive
+
+            Gets or refreshes an access token for making API calls for the tenant ID
+            b446a536-cb76-4360-a8bb-6593cf4d9c7f. Ensures a pop-up box appears.
+
         #>
 
         ############################################################################
 
-        [CmdletBinding()]
+        [CmdletBinding(DefaultParameterSetName="InterActive")]
         param(
 
             #The tenant ID
             [Parameter(Mandatory,Position=0)]
             [guid]$TenantId,
 
-            #The tenant ID
-            [Parameter(Position=1)]
-            [switch]$ForceRefresh
+            #Force a token refresh
+            [Parameter(Position=1,ParameterSetName="ForceRefresh")]
+            [switch]$ForceRefresh,
 
+            #The user's upn used for the login hint
+            [Parameter(Position=2,ParameterSetName="InterActive")]
+            [string]$LoginHint,
+
+            #Force a pop-up box
+            [Parameter(Position=3,ParameterSetName="InterActive")]
+            [switch]$InterActive
         )
 
 
@@ -169,7 +192,7 @@
 
 
         #Get an access token using the PowerShell client ID
-        $ClientId = "1b730954-1685-4b74-9bfd-dac224a7b894"
+        $ClientId = "1b730954-1685-4b74-9bfd-dac224a7b894" 
         $RedirectUri = "urn:ietf:wg:oauth:2.0:oob"
         $Authority = "https://login.microsoftonline.com/$TenantId"
     
@@ -199,21 +222,30 @@
             }
 
         }
-        else {
+        elseif ($LoginHint) {
 
-            Write-Verbose -Message "$(Get-Date -f T) - Checking token cache"
+            Write-Verbose -Message "$(Get-Date -f T) - Checking token cache with -LoginHint for $LoginHint"
 
             #Run this to obtain an access token - should prompt on first run to select the account used for future operations
             try {
 
-                $Response = Get-MsalToken -ClientId $ClientId -RedirectUri $RedirectUri -Authority $Authority -Prompt SelectAccount
+                if ($InterActive) {
+
+                    $Response = Get-MsalToken -ClientId $ClientId -RedirectUri $RedirectUri -Authority $Authority -LoginHint $LoginHint -Interactive
+
+                } 
+                else {
+
+                    $Response = Get-MsalToken -ClientId $ClientId -RedirectUri $RedirectUri -Authority $Authority -LoginHint $LoginHint
+
+                }
             }
             catch {}
 
             #Error handling for token acquisition
             if ($Response) {
 
-                Write-Verbose -Message "$(Get-Date -f T) - API Access Token obtained"
+                Write-Verbose -Message "$(Get-Date -f T) - API Access Token obtained for $(($Response).Account)"
 
                 return $Response
 
@@ -221,7 +253,44 @@
             else {
 
                 Write-Warning -Message "$(Get-Date -f T) - Failed to obtain an Access Token - try re-running the cmdlet again"
-                Write-Warning -Message "$(Get-Date -f T) - If the problem persists, start a new PowerShell session"
+                Write-Warning -Message "$(Get-Date -f T) - If the problem persists, use `$Error[0] for more detail on the error or start a new PowerShell session"
+
+            }
+
+        }
+        else {
+
+            Write-Verbose -Message "$(Get-Date -f T) - Checking token cache with -Prompt"
+
+            #Run this to obtain an access token - should prompt on first run to select the account used for future operations
+            try {
+
+                if ($InterActive) {
+
+                    $Response = Get-MsalToken -ClientId $ClientId -RedirectUri $RedirectUri -Authority $Authority -Prompt SelectAccount -Interactive
+
+                }
+                else {
+
+                    $Response = Get-MsalToken -ClientId $ClientId -RedirectUri $RedirectUri -Authority $Authority -Prompt SelectAccount
+
+                }
+
+            }
+            catch {}
+
+            #Error handling for token acquisition
+            if ($Response) {
+
+                Write-Verbose -Message "$(Get-Date -f T) - API Access Token obtained for $(($Response).Account)"
+
+                return $Response
+
+            }
+            else {
+
+                Write-Warning -Message "$(Get-Date -f T) - Failed to obtain an Access Token - try re-running the cmdlet again"
+                Write-Warning -Message "$(Get-Date -f T) - If the problem persists, run Connect-AzureADIR with the -UserUpn parameter"
 
             }
 
@@ -232,6 +301,43 @@
 
 
     function Get-AzureADHeader {
+
+        ############################################################################
+
+        <#
+        .SYNOPSIS
+
+            Uses a supplied Access Token to construct a header for a an API call.
+
+
+        .DESCRIPTION
+
+            Uses a supplied Access Token to construct a header for a an API call with 
+            Invoke-WebRequest.
+
+            Can supply the ConsistencyLevel = Eventual parameter for performing Count
+            activities.
+
+
+        .EXAMPLE
+
+            Get-AzureADHeader -Token $Token
+
+            Constructs a header with an obtained token for using with Invoke-WebRequest.
+
+
+        .EXAMPLE
+
+            Get-AzureADHeader -Token $Token -ConsistencyLevelEventual
+
+            Constructs a header with an obtained token for using with Invoke-WebRequest.
+
+            Uses the optional -ConsistencyLevelEventual switch for use in conjunction with
+            the count call.
+
+        #>
+
+        ############################################################################
     
         [CmdletBinding()]
         param(
@@ -246,13 +352,15 @@
 
             )
 
+        ############################################################################
+
         if ($ConsistencyLevelEventual) {
 
             return @{
 
                 "Authorization" = ("Bearer {0}" -f $Token);
                 "Content-Type" = "application/json";
-                "ConsistencyLevel" = "eventual";
+                 "ConsistencyLevel" = "eventual";
 
             }
 
@@ -261,7 +369,7 @@
 
             return @{
 
-                "Authorization" = ("Bearer {0}" -f $Token); 
+                "Authorization" = ("Bearer {0}" -f $Token);
                 "Content-Type" = "application/json";
 
             }
@@ -328,7 +436,7 @@
         ############################################################################
 
         #Get / refresh an access token
-        $global:Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
+        $Token = (Get-AzureADApiToken -TenantId $TenantId -InterActive).AccessToken
 
         if ($Token) {
 
@@ -545,7 +653,7 @@
                 #Update the fetch url to include the paging element
                 $Url = ($myReport.Content | ConvertFrom-Json).'@odata.nextLink'
 
-                #Update the access tokenon the second iteration
+                #Update the access token on the second iteration
                 if ($OneSuccessfulFetch) {
                 
                     $Token = (Get-AzureADApiToken -TenantId $TenantId).AccessToken
