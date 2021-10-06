@@ -193,7 +193,7 @@
 
         #Get an access token using the PowerShell client ID
         $ClientId = "1b730954-1685-4b74-9bfd-dac224a7b894" 
-        $RedirectUri = "urn:ietf:wg:oauth:2.0:oob"
+        #$RedirectUri = "urn:ietf:wg:oauth:2.0:oob"
         $Authority = "https://login.microsoftonline.com/$TenantId"
     
         if ($ForceRefresh) {
